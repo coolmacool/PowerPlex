@@ -2,16 +2,19 @@
  
     [CmdletBinding()]
     Param(
-        [Parameter(Mandatory=$True,
-                   Position=1)]
-        [ScriptBlock]$ThreadBlock,
- 
-        [Parameter(Mandatory=$False,
-                   Position=2)]
-        [HashTable]$ThreadParams,
+        [Parameter(
+                    Mandatory=$True,
+                    Position=1)]
+        [Net.HttpListener]$Listener,
 
-        [Parameter(Mandatory=$False,
-                   Position=3)]
+        [Parameter(
+                    Mandatory=$True,
+                    Position=2)]
+        [ScriptBlock]$RequestCallback,
+
+        [Parameter(
+                    Mandatory=$False,
+                    Position=3)]
         [Int]$MaxThreads
     )
 
@@ -26,57 +29,59 @@
     $Pool = [RunspaceFactory]::CreateRunspacePool(1, $MaxThreads, $SessionState, $Host)
     $Pool.ApartmentState  = "STA"
     $Pool.Open()
+
+    $Listener.Start()
  
-    $Jobs      = New-Object 'Collections.Generic.List[System.IAsyncResult]'
-    $Pipelines = New-Object 'Collections.Generic.List[System.Management.Automation.PowerShell]'
-    $Handles   = New-Object 'Collections.Generic.List[System.Threading.WaitHandle]'
- 
+    $Jobs = New-Object 'Collections.Generic.List[PSCustomObject]'
+
     # Queue "threads", limit number to MaxThreads value 
-    for ($i = 1 ; $i -le $MaxThreads ; $i++) {
- 
+    for ($i = 1 ; $i -le $MaxThreads ; $i++) 
+    {
         $Pipeline = [PowerShell]::Create()
         $Pipeline.RunspacePool = $Pool
-        $Pipeline.AddScript($ThreadBlock) | Out-Null
- 
-        $Params = @{ 'ThreadID' = $i }
- 
-        if ($ThreadParams) { $Params += $ThreadParams }
- 
+        $Pipeline.AddScript($RequestCallback) | Out-Null
+
+        $Params = 
+        @{ 
+            ThreadID = $i 
+            Listener = $Listener
+        }
+        
         $Pipeline.AddParameters($Params) | Out-Null
  
-        $Pipelines.Add($Pipeline)
         $Job = $Pipeline.BeginInvoke()
-        $Jobs.Add($job)
- 
-        $Handles.Add($Job.AsyncWaitHandle)
+
+        $Jobs.Add((New-Object -TypeName PSObject -Property @{
+            Pipeline = $Pipeline
+            Job      = $Job
+        }))
 
     }
  
     Write-Output "Starting Listener Count: $($Jobs.Count)"
 
-    while ($Pipelines.Count -gt 0) {
-        
+    while ($Jobs.Count -gt 0) 
+    {   
         $AwaitingRequest = $true
 		While ($AwaitingRequest)
 		{
-			foreach ($j in $jobs)
+			foreach ($j in $Jobs)
 			{
-				if ($j.IsCompleted)
+				if ($j.Job.IsCompleted)
 				{
 					#Can cancel now with Control+C
                     $AwaitingRequest = $False
-                    $JobIndex = $jobs.IndexOf($j)
+
+                    $JobIndex = $Jobs.IndexOf($j)
+                    $Job = $j.Job
+                    $Pipeline = $j.Pipeline
+
                     break
 				}
 			}
 		}
-		
-        $Handle   = $handles.Item($JobIndex)
-        $Job      = $jobs.Item($JobIndex)
-        $Pipeline = $Pipelines.Item($JobIndex)
- 
-        $Result   = $Pipeline.EndInvoke($job)
-        
+
+        $Result   = $Pipeline.EndInvoke($Job)
         
         # Process returned data    
         if ($Pipeline.HadErrors) 
@@ -87,30 +92,31 @@
         {
             Write-Output ("{0}: Served {1} by thread: {2}" -f ((Get-date -Format HH:mm:ss),$result[1],($JobIndex+1)))
         }
- 
-        $Handles.RemoveAt($JobIndex)
+
         $Jobs.RemoveAt($JobIndex)
-        $Pipelines.RemoveAt($JobIndex)
- 
-        $Handle.Close()
+
         $Pipeline.Dispose()
 
         # Requeue a new "thread"
         $Pipeline = [PowerShell]::Create()
         $Pipeline.RunspacePool = $Pool
-        $Pipeline.AddScript($ThreadBlock) | Out-Null
+        $Pipeline.AddScript($RequestCallback) | Out-Null
  
-        $Params = @{ 'threadId' = $JobIndex + 1 } #convert from zero index
+        $Params = 
+        @{ 
+            ThreadID = ($JobIndex + 1) 
+            Listener = $Listener
+        }
  
-        if ($ThreadParams) { $Params += $ThreadParams }
+        $Pipeline.AddParameters($Params) | Out-Null
  
-        $pipeline.AddParameters($params) | Out-Null
-        $pipelines.Insert($JobIndex, $pipeline)
- 
-        $job = $pipeline.BeginInvoke()
-        $jobs.Insert($JobIndex, $Job)
+        $Job = $Pipeline.BeginInvoke()
 
-        $handles.Insert($JobIndex, $job.AsyncWaitHandle)
+        $Jobs.Insert($JobIndex, (New-Object -TypeName PSObject -Property @{
+            Pipeline = $Pipeline
+            Job      = $Job
+        }))
+
     }
     
     $pool.Close()
@@ -118,7 +124,7 @@
 }
 
 
-$ScriptBlock =
+$ProcessRequest =
 {
     param($ThreadID, $Listener)
     
@@ -164,16 +170,10 @@ $ScriptBlock =
     
 $Listener = New-Object Net.HttpListener
 $Listener.Prefixes.Add("http://+:8080/")
-$Listener.Start()
-
-$args = @{
-    Listener = $Listener
-}
-
 
 Try
 {
-    Invoke-HTTPListenerRunspace -ThreadBlock $ScriptBlock -ThreadParams $args -Verbose
+    Invoke-HTTPListenerRunspace -Listener $Listener -RequestCallback $ProcessRequest
     Write-Output "Server done."
 
 }
