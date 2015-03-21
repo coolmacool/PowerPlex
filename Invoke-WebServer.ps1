@@ -27,7 +27,7 @@
         $SessionState = [Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
  
         $Pool = [RunspaceFactory]::CreateRunspacePool(1, $MaxThreads, $SessionState, $Host)
-        $Pool.ApartmentState  = "STA"
+        $Pool.ApartmentState  = 'STA'
         $Pool.Open()
 
         $Listener.Prefixes.Add("http://trailers.apple.com:$Port/")       
@@ -36,12 +36,12 @@
 
         try
         {
-            $Certificate = (Get-ChildItem -Path Cert:\LocalMachine\My | ? { $_.Subject -eq "CN=trailers.apple.com" })
+            $Certificate = (Get-ChildItem -Path Cert:\LocalMachine\My | ? { $_.Subject -eq 'CN=trailers.apple.com' })
             $CertificateThumbprint = $Certificate.Thumbprint
 
             # Windows XP/Server 2003 will need httpcfg.exe instead of netsh
-            [void](netsh http delete sslcert ipport="127.0.0.1:8443")
-            [void](netsh http add sslcert ipport="127.0.0.1:8443" certhash="$CertificateThumbprint" appid="{00112233-4455-6677-8899-AABBCCDDEEFF}")
+            [void](netsh http delete sslcert ipport='127.0.0.1:8443')
+            [void](netsh http add sslcert ipport='127.0.0.1:8443' certhash="$CertificateThumbprint" appid='{00112233-4455-6677-8899-AABBCCDDEEFF}')
         }
         catch
         {
@@ -70,7 +70,7 @@
 
                 $JS = Get-Content $FileName  | 
                 ForEach-Object { 
-                    If ($_ -match "\{\{URL\((.*?)\)\}\}") { $_.Replace($Matches[0],"https://trailers.apple.com" + $Matches[1]) }
+                    If ($_ -match '\{\{URL\((.*?)\)\}\}') { $_.Replace($Matches[0],'https://trailers.apple.com' + $Matches[1]) }
                     Else { $_ }
                 }
 
@@ -80,16 +80,16 @@
 
             $ReturnData = New-Object -TypeName psobject -Property @{
                 ThreadID = $ThreadID
-                Url = ""
-                ConsoleOutput = ""
+                Url = ''
+                ConsoleOutput = ''
                 StatusCode = 200
             }
                         
             $Context    = $Listener.GetContext()
             $Request    = $Context.Request
             $Response   = $Context.Response
-            $Response.Headers.Add("Server","PowerPlex")
-            $Response.Headers.Add("X-Powered-By","Microsoft PowerShell")
+            $Response.Headers.Add('Server','PowerPlex')
+            $Response.Headers.Add('X-Powered-By','Microsoft PowerShell')
 
             $ResponseData = Convert-JavaScript -FileName "$AssetsDirectory\js\application.js"
             #$ResponseData = "<html><body>TEST $($AssetsDirectory)</body></html>"
@@ -98,13 +98,13 @@
 
             $Buffer = [Text.Encoding]::UTF8.GetBytes($ResponseData)
         
-            $AcceptEncoding = $Request.Headers["Accept-Encoding"] -split "," | % { $_.Trim() }
+            $AcceptEncoding = $Request.Headers['Accept-Encoding'] -split ',' | % { $_.Trim() }
             if (-not [String]::IsNullOrEmpty($AcceptEncoding) -and 
-                ($AcceptEncoding -contains "gzip"))
+                ($AcceptEncoding -contains 'gzip'))
             {
-                $Response.AppendHeader("Content-Encoding","gzip")                
-                $Response.AppendHeader("Content-Type", "text/javascript")
-                $Response.AppendHeader("Vary", "Accept-Encoding")
+                $Response.AppendHeader('Content-Encoding','gzip')                
+                $Response.AppendHeader('Content-Type', 'text/plain')
+                $Response.AppendHeader('Vary', 'Accept-Encoding')
         
                 
                 try {
@@ -136,7 +136,7 @@
             $Response.Close()
 
             $ReturnData.Url = $Request.Url.LocalPath
-            $ReturnData.ConsoleOutput = "Test Output to display on console"
+            $ReturnData.ConsoleOutput = 'Test Output to display on console'
             $ReturnData.ConsoleOutput = "$AssetsDirectory\js\application.js"
 
             return $ReturnData
@@ -167,7 +167,7 @@
             
         }
         
-        Update-Console -Message "Starting Listener Threads: $($Jobs.Count)" -Sender "WebServer"
+        Update-Console -Message "Starting Listener Threads: $($Jobs.Count)" -Sender 'WebServer'
 		
         while ($Jobs.Count -gt 0) 
         {   
@@ -177,9 +177,9 @@
 		        if ([Console]::KeyAvailable) 
                 {
                     $Key = [Console]::ReadKey($true)
-                    if (($Key.Modifiers -band [ConsoleModifiers]"control") -and ($Key.Key -eq "C"))
+                    if (($Key.Modifiers -band [ConsoleModifiers]'control') -and ($Key.Key -eq 'C'))
                     {
-                        Write-Warning -Message "Server terminating..."
+                        Write-Warning -Message 'Server terminating...'
 
                         exit
                     }
@@ -205,7 +205,7 @@
             else 
             {
                 $Results | ForEach-Object { 
-                    Update-Console -Message "Served - $($_.Url) - $($_.ConsoleOutput)" -Sender "WebServer" 
+                    Update-Console -Message "Served - $($_.Url) - $($_.ConsoleOutput)" -Sender 'WebServer' 
                 }
             }
 
