@@ -69,7 +69,7 @@
                 )
 
                 $JS = Get-Content $FileName  | 
-                ForEach-Object { 
+                % { 
                     If ($_ -match '\{\{URL\((.*?)\)\}\}') { $_.Replace($Matches[0],'https://trailers.apple.com' + $Matches[1]) }
                     Else { $_ }
                 }
@@ -84,30 +84,46 @@
                 ConsoleOutput = ''
                 StatusCode = 200
             }
-                        
+            
+            $EnableGzip = $false            
+
             $Context    = $Listener.GetContext()
             $Request    = $Context.Request
             $Response   = $Context.Response
             $Response.Headers.Add('Server','PowerPlex')
             $Response.Headers.Add('X-Powered-By','Microsoft PowerShell')
 
-            $ResponseData = Convert-JavaScript -FileName "$AssetsDirectory\js\application.js"
-            #$ResponseData = "<html><body>TEST $($AssetsDirectory)</body></html>"
+            #if (-not $ResponseData) { $ResponseData = [String]::Empty }
             
-            if (-not $ResponseData) { $ResponseData = [String]::Empty }
-
+            # JS FILES
+            $RequestedFile          = $Request.Url.LocalPath -replace '/','\'
+            $RequestedFileDirectory = Split-Path -Path $RequestedFile -Parent
+            $RequestedFileBasename  = Split-Path -Path $RequestedFile -Leaf
+            $ResponseData = $RequestedFileBasename
+            
+            if ((($RequestedFileBasename -split '\.')[1] -eq 'js') -and ($RequestedFileDirectory -eq '\js'))
+            {             
+                <#if ($RequestedFileBasename -in ('application.js', 'main.js', 'javascript-packed.js', 'bootstrap.js'))
+                {
+                    $RequestedFile = '\js\application.js'
+                }
+               #>
+                #$ResponseData = Convert-JavaScript -FileName "$AssetsDirectory$RequestFile"
+            }
+            
             $Buffer = [Text.Encoding]::UTF8.GetBytes($ResponseData)
         
-            $AcceptEncoding = $Request.Headers['Accept-Encoding'] -split ',' | % { $_.Trim() }
-            if (-not [String]::IsNullOrEmpty($AcceptEncoding) -and 
-                ($AcceptEncoding -contains 'gzip'))
+            $ATVAcceptEncoding = $Request.Headers['Accept-Encoding'] -split ',' | % { $_.Trim() }
+            if (-not [String]::IsNullOrEmpty($ATVAcceptEncoding) -and 
+                ($ATVAcceptEncoding -contains 'gzip') -and
+                ($EnableGzip))
             {
                 $Response.AppendHeader('Content-Encoding','gzip')                
                 $Response.AppendHeader('Content-Type', 'text/plain')
                 $Response.AppendHeader('Vary', 'Accept-Encoding')
         
-                
-                try {
+                try 
+                {
  
                     $Output = $Response.OutputStream
                     $gzipStream = New-Object IO.Compression.GzipStream ($Output, [IO.Compression.CompressionMode]::Compress, $false)
@@ -136,8 +152,7 @@
             $Response.Close()
 
             $ReturnData.Url = $Request.Url.LocalPath
-            $ReturnData.ConsoleOutput = 'Test Output to display on console'
-            $ReturnData.ConsoleOutput = "$AssetsDirectory\js\application.js"
+            $ReturnData.ConsoleOutput = 'Test console output'
 
             return $ReturnData
         }
@@ -155,7 +170,7 @@
             $Params =   @{ 
                 ThreadID        = $i 
                 Listener        = $Listener
-                AssetsDirectory = $Script:PowerPlex.AssetsDirectory
+                AssetsDirectory = $PowerPlex.AssetsDirectory
             }
         
             [void]$Pipeline.AddParameters($Params)
@@ -185,7 +200,7 @@
                     }
                 } 	    
         
-                $Jobs | ForEach-Object {
+                $Jobs | % {
                     if ($_.Job.IsCompleted)
 				    {
                         $AwaitingRequest = $False
@@ -200,11 +215,11 @@
 
             if ($Pipeline.HadErrors)
             {
-                $Pipeline.Streams.Error.ReadAll() | ForEach-Object { Write-Error $_ }
+                $Pipeline.Streams.Error.ReadAll() | % { Write-Error $_ }
             }
             else 
             {
-                $Results | ForEach-Object { 
+                $Results | % { 
                     Update-Console -Message "Served - $($_.Url) - $($_.ConsoleOutput)" -Sender 'WebServer' 
                 }
             }
@@ -219,7 +234,7 @@
             $Params =   @{ 
                 ThreadID        = $i 
                 Listener        = $Listener
-                AssetsDirectory = $Script:PowerPlex.AssetsDirectory
+                AssetsDirectory = $PowerPlex.AssetsDirectory
             }
  
             [void]$Pipeline.AddParameters($Params)
