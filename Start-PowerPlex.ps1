@@ -2,8 +2,13 @@
 
 [Console]::TreatControlCAsInput = $true
 
-$PowerPlex = @{ ScriptDirectory = (Split-Path $MyInvocation.MyCommand.Definition -Parent); Script = $MyInvocation.MyCommand.Name }
+$PowerPlex = [hashtable]::Synchronized(@{})
+
+$PowerPlex.ScriptDirectory = (Split-Path $MyInvocation.MyCommand.Definition -Parent)
+$PowerPlex.Script = $MyInvocation.MyCommand.Name
 $PowerPlex.AssetsDirectory = $PowerPlex.ScriptDirectory + '\Assets'
+$PowerPlex.HostName = 'trailers.apple.com'
+$PowerPlex.Listener = New-Object Net.HttpListener
 
 Get-ChildItem (Join-Path $PowerPlex.ScriptDirectory *.ps1) | 
 ? { $_.Name -ne $PowerPlex.Script } | 
@@ -19,11 +24,9 @@ Update-Console 'PowerPlex'
 Update-Console 'Press CTRL-C to shutdown.'
 Update-Console '***'
 
-$Listener = New-Object Net.HttpListener
-
 Try
 {
-    Invoke-WebServer -Listener $Listener
+    Invoke-WebServer
 }
 catch 
 { 
@@ -32,5 +35,5 @@ catch
 }
 finally 
 { 
-    $Listener.Stop() 
+    $PowerPlex.Listener.Stop() 
 }

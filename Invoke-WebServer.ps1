@@ -1,15 +1,11 @@
 ﻿Function Invoke-WebServer
 {
     Param(
-        [Parameter( Mandatory=$True,
-                    Position=1)]
-        [Net.HttpListener]$Listener,
-
         [Parameter( Mandatory=$False)]
-        [Int]$Port=8080,
+        [Int]$Port=80,
         
         [Parameter( Mandatory=$False)]
-        [Int]$SSLPort=8443,
+        [Int]$SSLPort=443,
 
         [Parameter( Mandatory=$False)]
         [Int]$MaxThreads        
@@ -30,18 +26,19 @@
         $Pool.ApartmentState  = 'STA'
         $Pool.Open()
 
-        $Listener.Prefixes.Add("http://trailers.apple.com:$Port/")       
-        $Listener.Prefixes.Add("https://trailers.apple.com:$SSLPort/")   
-        $Listener.Start()
+        $PowerPlex.Listener.Prefixes.Add("http://$($PowerPlex.HostName):$Port/")       
+        $PowerPlex.Listener.Prefixes.Add("https://$($PowerPlex.HostName):$SSLPort/")   
+        $PowerPlex.Listener.Start()
 
         try
         {
-            $Certificate = (Get-ChildItem -Path Cert:\LocalMachine\My | ? { $_.Subject -eq 'CN=trailers.apple.com' })
+            $Certificate = (Get-ChildItem -Path Cert:\LocalMachine\My | ? { $_.Subject -eq "CN=$($PowerPlex.HostName)" })
+            If (-not $Certificate -is [Security.Cryptography.X509Certificates.X509Certificate2]) { throw 'Certifcate not found in certifcate store' }
             $CertificateThumbprint = $Certificate.Thumbprint
 
             # Windows XP/Server 2003 will need httpcfg.exe instead of netsh
-            [void](netsh http delete sslcert ipport='127.0.0.1:8443')
-            [void](netsh http add sslcert ipport='127.0.0.1:8443' certhash="$CertificateThumbprint" appid='{00112233-4455-6677-8899-AABBCCDDEEFF}')
+            [void](netsh http delete sslcert ipport="127.0.0.1:$SSLPort")
+            [void](netsh http add sslcert ipport="127.0.0.1:$SSLPort" certhash="$CertificateThumbprint" appid='{00112233-4455-6677-8899-AABBCCDDEEFF}')
         }
         catch
         {
@@ -51,7 +48,7 @@
         $Jobs = New-Object -TypeName 'Collections.Generic.List[PSCustomObject]'
 
         $RequestCallback = 
-        { param($ThreadID, $Listener, $AssetsDirectory)
+        { param($ThreadID, $PowerPlex)
             
             #region Request Processing Functions
             Function Convert-JavaScript
@@ -68,13 +65,15 @@
                     [string]$Options
                 )
 
-                $JS = Get-Content $FileName  | 
+                $AssetsDirectory = $PowerPlex.AssetsDirectory
+                
+                $JS = Get-Content $AssetsDirectory$FileName  | 
                 % { 
-                    If ($_ -match '\{\{URL\((.*?)\)\}\}') { $_.Replace($Matches[0],'https://trailers.apple.com' + $Matches[1]) }
+                    If ($_ -match '\{\{URL\((.*?)\)\}\}') { $_.Replace($Matches[0],"http://$($PowerPlex.HostName)" + $Matches[1]) }
                     Else { $_ }
                 }
 
-                $JS
+                $JS -join "`n"
             }
             #endregion
 
@@ -87,11 +86,12 @@
             
             $EnableGzip = $false            
 
-            $Context    = $Listener.GetContext()
+            $Context    = $PowerPlex.Listener.GetContext()
             $Request    = $Context.Request
             $Response   = $Context.Response
             $Response.Headers.Add('Server','PowerPlex')
             $Response.Headers.Add('X-Powered-By','Microsoft PowerShell')
+            $Response.Headers.Add('Vary', 'Accept-Encoding')
 
             #if (-not $ResponseData) { $ResponseData = [String]::Empty }
             
@@ -99,16 +99,17 @@
             $RequestedFile          = $Request.Url.LocalPath -replace '/','\'
             $RequestedFileDirectory = Split-Path -Path $RequestedFile -Parent
             $RequestedFileBasename  = Split-Path -Path $RequestedFile -Leaf
-            $ResponseData = $RequestedFileBasename
+            $ResponseData           = $RequestedFileBasename
             
             if ((($RequestedFileBasename -split '\.')[1] -eq 'js') -and ($RequestedFileDirectory -eq '\js'))
             {             
-                <#if ($RequestedFileBasename -in ('application.js', 'main.js', 'javascript-packed.js', 'bootstrap.js'))
+                if ($RequestedFileBasename -in ('application.js', 'main.js', 'javascript-packed.js', 'bootstrap.js'))
                 {
                     $RequestedFile = '\js\application.js'
                 }
-               #>
-                #$ResponseData = Convert-JavaScript -FileName "$AssetsDirectory$RequestFile"
+               
+                $ResponseData = Convert-JavaScript -FileName $RequestedFile
+                $EnableGzip   = $true
             }
             
             $Buffer = [Text.Encoding]::UTF8.GetBytes($ResponseData)
@@ -118,10 +119,9 @@
                 ($ATVAcceptEncoding -contains 'gzip') -and
                 ($EnableGzip))
             {
-                $Response.AppendHeader('Content-Encoding','gzip')                
-                $Response.AppendHeader('Content-Type', 'text/plain')
-                $Response.AppendHeader('Vary', 'Accept-Encoding')
-        
+                $Response.Headers.Add('Content-Encoding','gzip')                
+                $Response.Headers.Add('Content-Type', 'text/javascript')
+                
                 try 
                 {
  
@@ -142,6 +142,7 @@
             } 
             else
             {
+                $Response.Headers.Add('Content-Type', 'text/plain')
                 $Response.ContentLength64 = $Buffer.Length
                 $Output = $Response.OutputStream
                 $Output.Write($Buffer, 0, $Buffer.Length)
@@ -168,9 +169,8 @@
             [void]$Pipeline.AddScript($RequestCallback)
 
             $Params =   @{ 
-                ThreadID        = $i 
-                Listener        = $Listener
-                AssetsDirectory = $PowerPlex.AssetsDirectory
+                ThreadID    = $i 
+                PowerPlex = $PowerPlex
             }
         
             [void]$Pipeline.AddParameters($Params)
@@ -232,9 +232,8 @@
             [void]$Pipeline.AddScript($RequestCallback)
  
             $Params =   @{ 
-                ThreadID        = $i 
-                Listener        = $Listener
-                AssetsDirectory = $PowerPlex.AssetsDirectory
+                ThreadID    = $i 
+                PowerPlex = $PowerPlex
             }
  
             [void]$Pipeline.AddParameters($Params)
@@ -249,7 +248,7 @@
 
     End
     {
-        $pool.Close()
+        $Pool.Close()
     }
 
 }
